@@ -1,0 +1,66 @@
+# =============================================================================
+# rabbitmq.yaml
+# -----------------------------------------------------------------------------
+# Starts RabbitMQ in the cluster. Think of RabbitMQ as a POST OFFICE:
+#   - publisher drops letters (messages) into a box called "orders"
+#   - consumer workers pick letters out of the box one by one
+# Without this running, no queue exists and nothing else in the demo works.
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment                         # long-running app (always-on)
+metadata:
+  name: rabbitmq
+  namespace: default
+spec:
+  replicas: 1                            # one RabbitMQ pod is enough for a demo
+  selector:
+    matchLabels:
+      app: rabbitmq                      # match pods carrying this label
+  template:                              # recipe for each pod
+    metadata:
+      labels:
+        app: rabbitmq                    # label so the Service below can find it
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-management   # official image; "-management" adds a web UI
+          ports:
+            - containerPort: 5672        # AMQP port — apps talk to the queue here
+              name: amqp
+            - containerPort: 15672       # web UI port (browser dashboard)
+              name: management
+          env:
+            # demo-only creds — fine for learning, NEVER use guest/guest in prod
+            - name: RABBITMQ_DEFAULT_USER
+              value: "guest"
+            - name: RABBITMQ_DEFAULT_PASS
+              value: "guest"
+          resources:
+            requests:                    # "I need at least this much to start"
+              cpu: "200m"                #   200 millicores = 0.2 of one CPU core
+              memory: "256Mi"
+            limits:                      # "never let me use more than this"
+              cpu: "500m"
+              memory: "512Mi"
+---
+# -----------------------------------------------------------------------------
+# A Service gives RabbitMQ a stable DNS name ("rabbitmq") inside the cluster.
+# Pods can restart and move around, but this name always points to the live pod.
+# Publisher + consumer both connect using host="rabbitmq" — that's this Service.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq                         # DNS name → other pods reach it as "rabbitmq:5672"
+  namespace: default
+spec:
+  selector:
+    app: rabbitmq                        # forward traffic to pods with this label
+  ports:
+    - name: amqp
+      port: 5672                         # clients connect here
+      targetPort: 5672                   # → container port 5672
+    - name: management
+      port: 15672                        # web UI
+      targetPort: 15672

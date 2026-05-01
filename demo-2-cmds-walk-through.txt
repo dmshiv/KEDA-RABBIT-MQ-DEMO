@@ -1,0 +1,85 @@
+kubectl apply -f rabbitmq.yaml
+
+#u make consumer.py app into an image 
+# (default Dockerfile is the consumer one, so no -f flag needed)
+ docker build -t order-consumer:latest .
+
+ kind load docker-image order-consumer:latest --name demo-2-keda  #load image into kind cluster
+
+ need keda for new cluster too
+ helm install keda kedacore/keda --namespace keda --create-namespace
+
+kubectl apply -f scaled-object.yaml
+
+#now make publiser.py into container image
+# NOTE: must use -f Dockerfile.publisher, else docker picks the default Dockerfile (consumer)
+ docker build -f Dockerfile.publisher -t order-publisher:latest .
+
+ kind load docker-image order-publisher:latest --name demo-2-keda  #load image into kind cluster
+
+
+ ###demo cmds 
+
+terminal -1 
+ to watch keda taking to rabbit mq ?
+ kubectl logs -n keda -l app.kubernetes.io/name=keda-operator -f --tail=0 2>&1 | grep -i "s0-rabbitmq\|queue\|order-consumer"
+
+terminal-2
+ #watch live consumer pods going up 
+
+ watch -n1 'kubectl get pods; echo; kubectl get hpa'
+
+ terminal -3 
+
+ [root@centos10 consumer]# kubectl apply -f consumer-deployment.yaml
+deployment.apps/order-consumer unchanged
+[root@centos10 consumer]#
+[root@centos10 consumer]# #pods must be 0 as replicas 0                                            [root@centos10 consumer]#
+[root@centos10 consumer]# kubectl get pods -l app=order-consumer
+No resources found in default namespace.
+[root@centos10 consumer]#
+[root@centos10 consumer]# #now we start the publiseher and the consumer pods goes up
+[root@centos10 consumer]#
+[root@centos10 consumer]# kubectl get pods -l app=order-consumer
+NAME                              READY   STATUS              RESTARTS   AGE
+order-consumer-6bbc879bcc-4ttjv   1/1     Running             0          15s
+order-consumer-6bbc879bcc-5bppx   0/1     ContainerCreating   0          0s
+order-consumer-6bbc879bcc-9mwz5   1/1     Running             0          31s
+order-consumer-6bbc879bcc-c6w8l   1/1     Running             0          31s
+order-consumer-6bbc879bcc-cxx2t   1/1     Running             0          15s
+order-consumer-6bbc879bcc-gwvnx   0/1     ContainerCreating   0          0s
+order-consumer-6bbc879bcc-mn2dt   1/1     Running             0          31s
+order-consumer-6bbc879bcc-q29lq   1/1     Running             0          15s
+order-consumer-6bbc879bcc-qwmdg   1/1     Running             0          36s
+order-consumer-6bbc879bcc-twlfh   1/1     Running             0          15s
+
+terminal -4 
+
+[root@centos10 publisher]# kubectl apply -f publisher-job.yaml
+job.batch/order-publisher created
+[root@centos10 publisher]#
+
+
+terminal -5 precheck 
+
+[root@centos10 ~]# #only rabit mq.yml and scaled object.yml must be running ?
+[root@centos10 ~]#
+[root@centos10 ~]# kubectl get pods,scaledobject,hpa
+NAME                            READY   STATUS    RESTARTS   AGE
+pod/rabbitmq-745f76f64f-tdr2m   1/1     Running   0          79m
+
+NAME                                                SCALETARGETKIND      SCALETARGETNAME                                                                                                    MIN   MAX   READY   ACTIVE   FALLBACK   PAUSED   TRIGGERS   AUTHENTICATIONS         A                                                                                                 GE
+scaledobject.keda.sh/order-consumer-scaled-object   apps/v1.Deployment   order-consumer                                                                                                     0     10    True    True     False      False    rabbitmq   rabbitmq-trigger-auth   4                                                                                                 2m
+
+NAME                                                                        REFERENCE                                                                                                                    TARGETS      MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/keda-hpa-order-consumer-scaled-object   Deployment/o                                                                                                 rder-consumer   11/5 (avg)   1         10        10         42m
+[root@centos10 ~]#
+[root@centos10 ~]# #check Q in rabbit mq?
+[root@centos10 ~]#
+[root@centos10 ~]# kubectl exec deploy/rabbitmq -- rabbitmqctl list_queues
+Timeout: 60.0 seconds ...
+Listing queues for vhost / ...
+name    messages
+orders  0
+
+

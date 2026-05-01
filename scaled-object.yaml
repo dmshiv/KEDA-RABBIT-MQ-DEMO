@@ -1,0 +1,77 @@
+# =============================================================================
+# scaled-object.yaml  —  the KEDA brain of this demo
+# -----------------------------------------------------------------------------
+# This file has THREE parts separated by "---":
+#   1) Secret                  → stores the RabbitMQ connection string safely
+#   2) TriggerAuthentication   → tells KEDA "here's how to log in to RabbitMQ"
+#   3) ScaledObject            → the actual scaling rule
+#                                "watch the 'orders' queue, scale consumer 0→10"
+# =============================================================================
+
+
+# ──────────────────────────── PART 1: Secret ────────────────────────────
+# A Secret is a safer place to store passwords/URLs than typing them into the
+# ScaledObject directly. Here it holds the full RabbitMQ connection string.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-secret
+  namespace: default
+type: Opaque                             # "generic" secret (just key-value data)
+stringData:
+  # Breakdown of this URL:
+  #   amqp://        = protocol that RabbitMQ speaks
+  #   guest:guest@   = username:password (demo creds from rabbitmq.yaml)
+  #   rabbitmq...    = DNS name of the RabbitMQ Service (inside the cluster)
+  #   :5672/         = port + virtual host ("/")
+  host: "amqp://guest:guest@rabbitmq.default.svc.cluster.local:5672/"
+
+---
+# ───────────────────── PART 2: TriggerAuthentication ─────────────────────
+# KEDA needs credentials to poll RabbitMQ every 5 seconds. Instead of putting
+# the URL inside the ScaledObject, we tell KEDA "fetch it from this Secret".
+# This keeps the ScaledObject file clean and lets you swap creds without edits.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: rabbitmq-trigger-auth
+  namespace: default
+spec:
+  secretTargetRef:
+    - parameter: host                    # KEDA's RabbitMQ scaler expects a "host"
+      name: rabbitmq-secret              # look in this Secret...
+      key: host                          # ...at this key → grabs the URL above
+
+---
+# ─────────────────────────── PART 3: ScaledObject ───────────────────────────
+# THE main event. This is the rule KEDA follows every 5 seconds:
+#   "Look at the 'orders' queue in RabbitMQ. Divide queue length by 5.
+#    Scale the 'order-consumer' Deployment to that many pods, between 0 and 10."
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: order-consumer-scaled-object
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: order-consumer                 # WHICH deployment to scale up/down
+
+  minReplicaCount: 0                     # idle state → 0 pods (true scale-to-zero)
+  maxReplicaCount: 10                    # ceiling → never more than 10 consumer pods
+  pollingInterval: 5                     # how often KEDA asks RabbitMQ "how many?"
+                                         #   (seconds) → lower = faster reaction
+  cooldownPeriod: 30                     # after queue hits 0, wait this long before
+                                         #   scaling down to 0 (avoids flapping)
+
+  triggers:
+    - type: rabbitmq                     # built-in RabbitMQ scaler
+      metadata:
+        queueName: orders                # the queue to watch
+        mode: QueueLength                # metric = number of pending messages
+                                         # (other mode: "MessageRate")
+        value: "5"                       # target messages per pod →
+                                         #   queue=50 → wants 50/5 = 10 pods
+                                         #   queue=25 → wants 25/5 = 5 pods
+                                         #   queue=0  → wants 0 pods
+      authenticationRef:
+        name: rabbitmq-trigger-auth      # use PART 2 above to connect

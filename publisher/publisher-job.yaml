@@ -1,0 +1,32 @@
+# =============================================================================
+# publisher-job.yaml  —  the one-shot traffic generator
+# -----------------------------------------------------------------------------
+# A Job (not a Deployment) because this pod has ONE task:
+#   "Connect to RabbitMQ, push N fake orders into the 'orders' queue, exit."
+# After it exits, the queue is full → KEDA wakes up the consumers.
+#
+# To fire it again later, delete + apply (Jobs are immutable):
+#   kubectl delete job order-publisher --ignore-not-found
+#   kubectl apply  -f publisher-job.yaml
+# =============================================================================
+apiVersion: batch/v1
+kind: Job                                # "run to completion" workload
+metadata:
+  name: order-publisher
+  namespace: default
+spec:
+  ttlSecondsAfterFinished: 30            # auto-delete the Job 30s after it finishes
+                                         # → so next `apply` works without manual delete
+  template:                              # recipe for the pod the Job creates
+    spec:
+      containers:
+        - name: publisher
+          image: order-publisher:latest  # built with `docker build -f Dockerfile.publisher`
+          imagePullPolicy: Never         # kind-only image, don't pull from Docker Hub
+          args: ["500"]                  # pass "500" to publisher.py → pushes 500 messages
+                                         # change this to 50 / 5000 for different load sizes
+          env:
+            - name: RABBITMQ_HOST        # publisher.py reads this to know where to connect
+              value: "rabbitmq"          # → RabbitMQ Service DNS name
+      restartPolicy: Never               # if the pod dies, don't restart it in-place
+  backoffLimit: 1                        # if the pod fails, retry at most 1 time

@@ -1,0 +1,14 @@
+#for building consumer image
+
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install pika
+COPY consumer.py .
+CMD ["python", "consumer.py"]
+
+# docker build -f Dockerfile.consumer -t order-consumer:latest .
+#          └────────────┬────────────┘ └──────────┬──────────┘ │
+#                       │                          │            │
+#          use this recipe file              tag the result    build context
+#                                            with this name    (folder with the
+#                                                               source code)

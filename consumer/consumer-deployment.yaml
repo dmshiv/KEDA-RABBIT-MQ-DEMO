@@ -1,0 +1,46 @@
+# =============================================================================
+# consumer-deployment.yaml  —  the workers KEDA will scale up and down
+# -----------------------------------------------------------------------------
+# These pods are the "post-office workers". Each one:
+#   1. Connects to RabbitMQ
+#   2. Pulls one letter (message) out of the "orders" queue at a time
+#   3. "Processes" it (our demo just prints it)
+#
+# We start with replicas: 0 because KEDA OWNS this number — it will raise and
+# lower it based on how many messages are waiting in the queue.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-consumer                   # ScaledObject's scaleTargetRef points here
+  namespace: default
+spec:
+  replicas: 0                            # start at 0; KEDA takes over from here.
+                                         # (setting a number here is pointless —
+                                         #  KEDA will overwrite it every poll)
+  selector:
+    matchLabels:
+      app: order-consumer                # this Deployment owns pods with this label
+  template:                              # recipe for each pod
+    metadata:
+      labels:
+        app: order-consumer              # label so Deployment + selectors find them
+    spec:
+      containers:
+        - name: consumer
+          image: order-consumer:latest   # the image we built with `docker build`
+          imagePullPolicy: Never         # IMPORTANT for kind: don't try to pull
+                                         # from Docker Hub — image only exists
+                                         # locally (loaded via `kind load`)
+          env:
+            - name: RABBITMQ_HOST        # consumer.py reads this env var to know
+              value: "rabbitmq"          # where to connect → the Service name
+            - name: QUEUE_NAME           # which queue to pull messages from
+              value: "orders"
+          resources:
+            requests:                    # "I need at least this much to start"
+              cpu: "100m"                # 0.1 of a CPU core (very light)
+              memory: "128Mi"
+            limits:                      # hard cap — container gets killed if
+              cpu: "200m"                # it tries to use more
+              memory: "256Mi"
